@@ -1,0 +1,67 @@
+##mapping 
+bwa index ref-genome.fasta
+bwa mem -t 4 ref-genome.fasta raw-reads_R1.fq raw-reads_R2.fq | samtools view -Sb > indiv_outputmapping.bam
+samtools sort -@ 4 -o indiv_outputsorted.bam indiv_outputmapping.bam
+samtools index indiv_outputsorted.bam 
+samtools view -f 2 -b -o indiv_mapped.bam indiv_outputsortedC.bam
+samtools bam2fq indiv_mapped.bam > indiv_mapped.fastq
+
+fastqc indiv_mapped.fastq ##quality checking
+samtools flagstat indiv_outputmapping.bam > indiv_stat.txt ##quality checking
+
+
+##assembling (SPAdes)
+spades.py --12 indiv_mapped.fastq -o indiv_draftgenome
+quast.py indiv_draftgenome_scaffolds.fasta
+
+##assembling (MEGAHIT)
+megahit --12 indiv_mapped.fastq -o indiv_draftgenome
+quast.py indiv_draftgenome_scaffolds.fasta
+
+
+##process in order to obtain a final assembling genome
+ragoo.py indiv_draftgenome_scaffolds.fasta ref-genome.fasta
+
+
+##a BLAST of individually contigs on NCBI (online) 
+
+
+##retrieving proper contigs
+
+
+##quality and completeness analyses
+quast.py indiv_finalgenome_scaffolds.fasta
+
+gtool.py -s -g indiv_finalgenome_scaffolds.fasta 
+
+busco -m genome -l ./bacteria_odb10 -o indivBUSCO -i indiv_finalgenome_scaffolds.fasta -c 1 -f --augustus_species ecoli
+
+
+##annotation 
+prokka --outdir indiv_Prokka --prefix indiv indiv_finalgenome_scaffolds.fasta
+
+
+##FPI and B vitamins pathways analyses
+makeblastdb -in indiv_finalgenome_scaffolds.fasta -dbtype nucl -out indiv_db
+blastn -query query-gene.fasta -outfmt "6 qseqid sseqid sseq qlen pident nident mismatch evalue sstart send gapopen" -perc_identity 40 -out gene_vs_indiv.out -db indiv_db 
+
+makeblastdb -in indiv_annotation.faa -dbtype prot -out indiv_db
+blastp -query query-gene.faa -out gene_vs_indiv.out -num_threads 6 -db indiv_db -outfmt "6 qseqid sseqid sseq qlen pident nident mismatch evalue sstart send gapopen" -evalue 1e-1
+
+
+##phylogenomics
+orthofinder -f ./FLE_phylo -t 4 -S blast ##FLE_phylo: directory containing all genomes used for phylogenomic analyses 
+
+for file in /home/FLE_phylo/Single_Copy_Orthologue_Sequences/*
+do mafft "$file" > "$file"
+done
+
+for file in /home/FLE_phylo/Single_Copy_Orthologue_Sequences/*
+do trimal -in "$file" -out "$file" -fasta -gt 1 -cons 50
+done
+
+AMAS.py concat -f fasta -d aa --in-files /home/FLE_phylo/Single_Copy_Orthologue_Sequences/*.fasta
+
+modeltest-ng -i FLE-phylo_concatenated.faa -p 12 -T raxml -d aa
+ 
+raxmlHPC-PTHREADS -T 8 -f a -s FLE-phylo_concatenated.faa -n FLE-phylo_concatenated.faa.boot -m model -x 1234 -# 100 -p 123
